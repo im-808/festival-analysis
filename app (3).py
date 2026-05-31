@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # 1. 화면 설정 (웹 페이지 제목)
 st.set_page_config(page_title="2025 지역별 축제 통계", layout="wide")
