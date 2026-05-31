@@ -1,108 +1,118 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import os
+import plotly.graph_objects as go
 
-# 1. 화면 설정 (웹 페이지 제목)
-st.set_page_config(page_title="2025 지역별 축제 통계", layout="wide")
+# 웹페이지 기본 설정 (제목 및 아이콘)
+st.set_page_config(page_title="전국 지역축제 효율성 분석", layout="wide")
 
-# 2. 데이터베이스 설정 및 가짜 데이터 생성 (SQLite)
-def init_db():
-    conn = sqlite3.connect('festival_data.db')
-    cursor = conn.cursor()
-    
-    # 테이블 생성 (이미 있으면 생성 안 함)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS festival_stats (
-            region TEXT,
-            festival_count INTEGER,
-            visitor_count INTEGER
-        )
-    ''')
-    
-    # 데이터가 비어있을 때만 샘플 데이터 삽입
-    cursor.execute("SELECT count(*) FROM festival_stats")
-    if cursor.fetchone()[0] == 0:
-        # 사진과 유사한 샘플 데이터 (17개 광역자치단체)
-        data = [
-            ('서울', 71, 17200000), ('부산', 57, 12500000), ('대구', 38, 3500000),
-            ('인천', 28, 3200000), ('광주', 19, 2900000), ('대전', 22, 6500000),
-            ('울산', 34, 4900000), ('세종', 7, 1000000), ('경기', 155, 14000000),
-            ('강원', 123, 11500000), ('충북', 60, 6200000), ('충남', 101, 13400000),
-            ('전북', 89, 8200000), ('전남', 143, 10800000), ('경북', 101, 10500000),
-            ('경남', 109, 12500000), ('제주', 57, 1500000)
-        ]
-        cursor.executemany("INSERT INTO festival_stats VALUES (?, ?, ?)", data)
-        conn.commit()
-    return conn
+# 1. 🚨 데이터베이스 파일 존재 여부 체크 (친절한 에러 메시지)
+db_filename = "festival.db"
 
-# 3. 데이터 불러오기
-def load_data():
-    conn = init_db()
-    df = pd.read_sql_query("SELECT * FROM festival_stats", conn)
-    conn.close()
-    return df
+if not os.path.exists(db_filename):
+    st.error(f"⚠️ 데이터베이스 파일(`{db_filename}`)을 찾을 수 없습니다.")
+    st.info("💡 프로젝트 폴더 안에 SQLite 데이터베이스 파일이 올바르게 위치해 있는지 확인해 주세요.")
+    st.stop()  # 파일이 없으면 여기서 프로그램을 안전하게 멈춥니다.
 
-# 메인 화면 구성
-st.title("📊 2025 지역별 축제 수 vs 연간 총 방문자 수 비교")
-st.markdown("공공데이터를 활용한 지역별 축제 현황 대시보드입니다.")
+# 2. 데이터베이스 연결 및 SQL 실행
+conn = sqlite3.connect(db_filename)
 
-# 데이터 로드
-df = load_data()
+# 공식 행정구역 순서대로 데이터를 가져오는 SQL 쿼리
+# '총괄' 데이터인 regional_summary 테이블을 기준으로 안전하게 조회합니다.
+query = """
+SELECT 
+    광역자치단체,
+    축제수,
+    총방문객수
+FROM regional_summary
+ORDER BY 
+    CASE 광역자치단체
+        WHEN '서울' THEN 1 WHEN '부산' THEN 2 WHEN '대구' THEN 3 WHEN '인천' THEN 4 
+        WHEN '광주' THEN 5 WHEN '대전' THEN 6 WHEN '울산' THEN 7 WHEN '세종' THEN 8 
+        WHEN '경기' THEN 9 WHEN '강원' THEN 10 WHEN '충북' THEN 11 WHEN '충남' THEN 12 
+        WHEN '전북' THEN 13 WHEN '전남' THEN 14 WHEN '경북' THEN 15 WHEN '경남' THEN 16 
+        WHEN '제주' THEN 17 END;
+"""
 
-# 4. 시각화 (이중 축 콤보 차트)
-def draw_chart(data):
-    # 이중 축을 위한 서브플롯 생성
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+df = pd.read_sql_query(query, conn)
+conn.close()
 
-    # 막대 그래프 추가 (지역별 축제 수) - 왼쪽 Y축
-    fig.add_trace(
-        go.Bar(
-            x=data['region'],
-            y=data['festival_count'],
-            name="축제 수 (개)",
-            marker_color='lightblue',
-            opacity=0.8
-        ),
-        secondary_y=False,
+# 3. 대시보드 화면 꾸미기
+st.title("📊 2025 전국 지역별 축제 수 vs 총 방문자 수 분석")
+st.markdown("지자체의 축제 공급(양적 투입)과 실제 관광객의 수요(모객력) 간의 미스매치를 분석합니다.")
+st.write("---")
+
+# 레이아웃 분할 (상단에 요약 수치 보여주기)
+col1, col2, col3 = st.columns(3)
+col1.metric("전국 총 축제 수", f"{df['축제수'].sum():,} 개")
+col2.metric("전국 총 방문자 수", f"{int(df['총방문객수'].sum()):,} 명")
+col3.metric("가장 축제가 많은 지역", f"{df.loc[df['축제수'].idxmax(), '광역자치단체']} ({df['축제수'].max()}개)")
+
+st.write("---")
+
+# ① 시각화: Plotly를 이용한 이중 축 콤보 차트 그리기
+fig = go.Figure()
+
+# 왼쪽 Y축: 지역별 축제 수 (막대 차트)
+fig.add_trace(
+    go.Bar(
+        x=df['광역자치단체'],
+        y=df['축제수'],
+        name="축제 수 (개)",
+        marker_color='#87CEEB',
+        opacity=0.8,
+        yaxis='y1'
     )
+)
 
-    # 선 그래프 추가 (방문자 수) - 오른쪽 Y축
-    fig.add_trace(
-        go.Scatter(
-            x=data['region'],
-            y=data['visitor_count'],
-            name="총 방문자 수 (명)",
-            mode='lines+markers',
-            line=dict(color='orangered', width=2),
-            marker=dict(size=8)
-        ),
-        secondary_y=True,
+# 오른쪽 Y축: 연간 총 방문자 수 (선 차트)
+fig.add_trace(
+    go.Scatter(
+        x=df['광역자치단체'],
+        y=df['총방문객수'],
+        name="총 방문자 수 (명)",
+        mode='lines+markers',
+        line=dict(color='#FF4500', width=3),
+        marker=dict(size=8),
+        yaxis='y2'
     )
+)
 
-    # 차트 레이아웃 설정
-    fig.update_layout(
-        title_text="지역별 축제 현황 비교 (2025)",
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=50, r=50, t=80, b=50),
-        height=600
-    )
+# 이중 축 레이아웃 상세 설정
+fig.update_layout(
+    title=dict(text="지역별 축제 공급과 수요 미스매치 비교", font=dict(size=18)),
+    xaxis=dict(title="광역자치단체 (공식 순서)"),
+    yaxis=dict(
+        title="축제 수 (개)",
+        titlefont=dict(color="navy"),
+        tickfont=dict(color="navy"),
+        range=[0, 180]
+    ),
+    yaxis2=dict(
+        title="총 방문자 수 (명)",
+        titlefont=dict(color="darkred"),
+        tickfont=dict(color="darkred"),
+        overlaying='y',
+        side='right'
+    ),
+    legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.5)"),
+    hovermode="x unified",
+    figsize=(12, 6)
+)
 
-    # X축 설정
-    fig.update_xaxes(title_text="광역자치단체")
+# Streamlit 화면에 그래프 출력
+st.plotly_chart(fig, use_container_width=True)
 
-    # 왼쪽 Y축 설정
-    fig.update_yaxes(title_text="<b>축제 수 (개)</b>", secondary_y=False, range=[0, 180])
+st.write("---")
 
-    # 오른쪽 Y축 설정
-    fig.update_yaxes(title_text="<b>총 방문자 수 (명)</b>", secondary_y=True, tickformat=",d")
+# ② 사용한 SQL 쿼리 보여주기
+with st.expander("🔍 분석에 사용된 SQL 데이터 마트 쿼리 보기"):
+    st.code(query, language="sql")
 
-    return fig
-
-# 차트 표시
-chart = draw_chart(df)
-st.plotly_chart(chart, use_container_width=True)
-
-# 5. 하단 데이터 테이블 표시
-with st.expander("원본 데이터 보기"):
-    st.dataframe(df, use_container_width=True)
+# ③ 인사이트 서술
+st.subheader("💡 데이터 분석 인사이트")
+st.info("""
+- **양적 투입의 한계 고발 (공급 과잉 부작용)**: 전남(143개)과 경북(101개)은 축제 수가 최상위권이지만 방문자 수 그래프가 푹 꺼지는 '깊은 골짜기' 형태를 보입니다. 단순히 예산을 쪼개어 축제를 많이 여는 '나눠먹기식 집행'이 모객력으로 직결되지 않음을 증명합니다.
+- **고효율 가성비 지역 발굴**: 대전의 경우 축제 수(22개)는 최하위권이지만, 대형 킬러 콘텐츠 중심의 전략적 투자 성과로 방문자 수는 상위권으로 솟구치는 '양적 공급의 질적 역전' 우수 벤치마킹 사례로 볼 수 있습니다.
+""")
